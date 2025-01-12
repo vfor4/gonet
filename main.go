@@ -1,18 +1,12 @@
 package main
 
-import "fmt"
-
 func main() {
-	timer := make(chan int, 1)
-	timer <- 5
-	go HandleChan(timer)
+	a := 5
+	s := make([]int, a, 5)
+	s[0] = 5
+	update(s)
 }
-
-func HandleChan(timer chan int) {
-	select {
-	case n := <-timer:
-		fmt.Println(n)
-	default:
-		fmt.Println("nothing fancy")
-	}
+func update(s []int) {
+	s[0] = 5
+	s = append(s, 7)
 }
