@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -89,7 +92,129 @@ func decode(r io.Reader) (Payload, error) {
 	return payload, nil
 }
 
-func TestWriteAndRead(t *testing.T) {
+func TestProxy(t *testing.T) {
+	var wg sync.WaitGroup
+	proxyAddr := "127.0.0.1:38027"
+	serverAddr := "127.0.0.1:33293"
+	listenerReady := make(chan struct{})
+	proxyReady := make(chan struct{})
+	go StartListener(serverAddr, listenerReady, &wg)
+	<-listenerReady
+	go StartProxy(proxyAddr, serverAddr, &wg, proxyReady)
+	<-proxyReady
+	go StartClient(proxyAddr, &wg)
+	wg.Wait()
+}
+
+func StartClient(addr string, wg *sync.WaitGroup) error {
+	wg.Add(1)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(3*time.Second))
+	d := net.Dialer{}
+	go func() {
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			fmt.Printf("@4, %v\n", err)
+			return
+		}
+		defer func() {
+			cancel()
+			wg.Done()
+		}()
+		p := String("ping")
+		_, err = p.WriteTo(conn)
+		if err != nil {
+			fmt.Printf("@5, %v\n", err)
+			return
+		}
+		go func() {
+			for {
+				p, err := decode(conn)
+				if err != nil {
+					fmt.Printf("@2, %v", err)
+					return
+				}
+				switch p.String() {
+				case "pong":
+					fmt.Println("shut down client")
+					return
+					// po := String("end")
+					// _, err := po.WriteTo(conn)
+					// if err != nil {
+					// 	fmt.Printf("@8, %v\n", err)
+					// 	return
+					// }
+					// fmt.Println("shut down client")
+					// return
+				// case "ackend":
+				// 	fmt.Println("shut down client")
+				// 	return
+				default:
+					fmt.Println(p.String())
+					panic("client shouldn't be here'")
+				}
+			}
+		}()
+	}()
+	return nil
+}
+
+func StartListener(addr string, ready chan struct{}, wg *sync.WaitGroup) error {
+	wg.Add(1)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Printf("@1: %v\n", err)
+			return
+		}
+		defer func() {
+			conn.Close()
+			wg.Done()
+		}()
+		for {
+			p, err := decode(conn)
+			if err != nil {
+				fmt.Printf("@2, %v", err)
+				return
+			}
+			switch {
+			case p.String() == "ping":
+				fmt.Println("pong")
+				po := String("pong")
+				_, err := po.WriteTo(conn)
+				if err != nil {
+					fmt.Printf("@8, %v\n", err)
+					return
+				}
+				fmt.Println("shut down listener")
+				return
+			case strings.Contains(p.String(), "proxy"):
+				fmt.Println(p.String(), "hi proxy")
+				return
+			// case "end":
+			// 	fmt.Println("ackend")
+			// 	po := String("ackend")
+			// 	_, err := po.WriteTo(conn)
+			// 	if err != nil {
+			// 		fmt.Printf("@9, %v\n", err)
+			// 		return
+			// 	}
+			// 	fmt.Println("shut down listener")
+			// 	return
+			default:
+				panic("listener shouldn't be here'")
+			}
+
+		}
+	}()
+	ready <- struct{}{}
+	return nil
+}
+
+func xTestWriteAndRead(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:")
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +236,14 @@ func TestWriteAndRead(t *testing.T) {
 			fmt.Printf("Listener read error, %v", err)
 			return
 		}
-		fmt.Println(p.String())
+		if p.String() == "ping" {
+			po := String("pong")
+			_, err := po.WriteTo(conn)
+			if err != nil {
+				fmt.Printf("Failed to send pong, %v\n", err)
+				return
+			}
+		}
 	}()
 
 	dConn, err := net.Dial("tcp", l.Addr().String())
@@ -119,56 +251,54 @@ func TestWriteAndRead(t *testing.T) {
 		fmt.Printf("Dial error %v\n", err)
 		return
 	}
-	p := String("hello")
+	p := String("ping")
 	_, err = p.WriteTo(dConn)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+	po, err := decode(dConn)
+	if err != nil {
+		fmt.Printf("Dial error to read pong %v\n", err)
+		return
+	}
+	fmt.Println(po.String())
 	<-done
 }
 
-func testProxy(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:")
+func StartProxy(addr, serverAddr string, wg *sync.WaitGroup, ready chan struct{}) {
+	wg.Add(1)
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		t.Fatal(err)
+		fmt.Printf("@1, %v\n", err)
 	}
-
-	done := make(chan struct{})
 	go func() {
-		conn, err := l.Accept()
-		defer func() {
-			conn.Close()
-			done <- struct{}{}
-		}()
+		from, err := l.Accept()
 		if err != nil {
-			fmt.Printf("Listener error %v\n", err)
+			fmt.Printf("@2 error %v\n", err)
+			return
 		}
-		for {
-			b := make([]byte, 1024)
-			n, err := conn.Read(b)
-			if err != nil {
-				fmt.Printf("Listener read - error %v\n", err)
-				return
-			}
-			if string(b[:n]) == "ping" {
-				_, err = conn.Write([]byte("pong"))
-				if err != nil {
-					fmt.Printf("Listener write - error %v\n", err)
-				}
-			}
+		defer func() {
+			from.Close()
+			wg.Done()
+		}()
+		to, err := net.Dial("tcp", serverAddr)
+		if err != nil {
+			fmt.Printf("@3 error %v\n", err)
+			return
 		}
+		defer func() {
+			to.Close()
+			wg.Done()
+		}()
+		r, w := io.Pipe()
+		p := String("proxy here")
+		_, err = p.WriteTo(w)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		io.Copy(to, r)
 	}()
-}
-
-func xProxy(ac net.Conn, bc net.Conn) error {
-	_, err := io.Copy(ac, bc)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(bc, ac)
-	if err != nil {
-		return err
-	}
-	return nil
+	ready <- struct{}{}
 }
