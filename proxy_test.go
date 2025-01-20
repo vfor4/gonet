@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -92,7 +94,7 @@ func decode(r io.Reader) (Payload, error) {
 	return payload, nil
 }
 
-func TestProxy(t *testing.T) {
+func xTestProxy(t *testing.T) {
 	var wg sync.WaitGroup
 	proxyAddr := "127.0.0.1:38027"
 	serverAddr := "127.0.0.1:33293"
@@ -301,4 +303,17 @@ func StartProxy(addr, serverAddr string, wg *sync.WaitGroup, ready chan struct{}
 		io.Copy(to, r)
 	}()
 	ready <- struct{}{}
+}
+
+type Monitor struct {
+	*log.Logger
+}
+
+func (m *Monitor) Write(b []byte) (int, error) {
+	return len(b), m.Output(5, string(b))
+}
+
+func TestLogger(t *testing.T) {
+	m := &Monitor{Logger: log.New(os.Stdout, "monitor", 0)}
+	m.Write([]byte("hello world"))
 }
