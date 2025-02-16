@@ -5,9 +5,71 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
+
+func xTestCredentials(t *testing.T) {
+	lAddr, err := net.ResolveUnixAddr("unixgram", "/tmp/unixgram.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.ListenUnix("unixgram", lAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := l.AcceptUnix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := make(map[string]struct{})
+	groups["vugroup"] = struct{}{}
+	if Allowed(conn, groups) {
+		t.Log("OKAY")
+	}
+}
+
+func Allowed(conn *net.UnixConn, groups map[string]struct{}) bool {
+	if conn == nil || groups == nil || len(groups) == 0 {
+		return false
+	}
+	var (
+		ucred *unix.Ucred
+	)
+	socket, err := conn.File()
+	defer socket.Close()
+	if err != nil {
+		return false
+	}
+	for {
+		ucred, err = unix.GetsockoptUcred(int(socket.Fd()), unix.SOL_SOCKET, unix.SO_PEERCRED)
+		if err == unix.EINTR { //
+			continue
+		}
+		if err != nil {
+			return false
+		}
+
+		u, err := user.LookupId(fmt.Sprint(ucred.Uid))
+		if err != nil {
+			return false
+		}
+
+		gids, err := u.GroupIds()
+		if err != nil {
+			return false
+		}
+		for _, gid := range gids {
+			if _, ok := groups[gid]; ok {
+				return true
+			}
+		}
+
+	}
+}
 
 func TestUnixDatagram(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -18,7 +80,7 @@ func TestUnixDatagram(t *testing.T) {
 	defer func() {
 		os.RemoveAll(dir)
 	}()
-	lsocket := filepath.Join(dir, fmt.Sprintf("l%d.sock", os.Getpid()))
+	lsocket := filepath.Join(dir, fmt.Sprintf("l%d.sockx", os.Getpid()))
 	listenerAddr, err := unixDatagramEchoServer(ctx, "unixgram", lsocket)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +92,7 @@ func TestUnixDatagram(t *testing.T) {
 
 	defer cancel()
 
-	ssocket := filepath.Join(dir, fmt.Sprintf("s%d.sock", os.Getpid()))
+	ssocket := filepath.Join(dir, fmt.Sprintf("s%d.sockz", os.Getpid()))
 	conn, err := net.ListenPacket("unixgram", ssocket)
 	if err != nil {
 		t.Fatal(err)
