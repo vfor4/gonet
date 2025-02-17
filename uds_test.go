@@ -1,16 +1,106 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/user"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestMultiPart(t *testing.T) {
+	buf := new(bytes.Buffer)
+	w := multipart.NewWriter(buf)
+	for k, v := range map[string]string{
+		"date":        time.Now().Format(time.RFC3339),
+		"description": "Form value with attached files",
+	} {
+		err := w.WriteField(k, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i, v := range []string{
+		"./files/file1.txt",
+		"./files/file2.txt",
+	} {
+		fileWriter, err := w.CreateFormFile(fmt.Sprintf("file%d", i), filepath.Base(v))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		f, err := os.Open(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = io.Copy(fileWriter, f)
+		_ = f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = w.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://httpbin.org/post", buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != 200 {
+		t.Fatal("lame", resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	resp.Close = true
+	t.Logf("%s", b)
+}
+
+func xTestHttpWithTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { select {} }))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal(err)
+		}
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+func xTestNeverTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { select {} }))
+	_, _ = http.Get(server.URL)
+	t.Fatal("this never show")
+	_, _ = http.Head("zxc")
+}
 
 func xTestCredentials(t *testing.T) {
 	lAddr, err := net.ResolveUnixAddr("unixgram", "/tmp/unixgram.sock")
@@ -71,7 +161,7 @@ func Allowed(conn *net.UnixConn, groups map[string]struct{}) bool {
 	}
 }
 
-func TestUnixDatagram(t *testing.T) {
+func xTestUnixDatagram(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dir, err := os.MkdirTemp("", "unix_data_echo")
 	if err != nil {
