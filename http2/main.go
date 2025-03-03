@@ -43,16 +43,18 @@ func HomePageMethods(files string) Methods {
 	return Methods{
 		http.MethodGet: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if pusher, ok := w.(http.Pusher); ok {
-				targers := []string{
+				targets := []string{
 					"/static/style.css",
 					"/static/golang-gopher.svg",
 				}
-				for _, file := range targers {
+				for _, file := range targets {
 					if err := pusher.Push(file, nil); err != nil {
 						log.Printf("Failed to push file %v; error - %v", file, err)
 					}
 				}
 				http.ServeFile(w, r, filepath.Join(files, "index.html"))
+			} else {
+				log.Println("Not a Pusher")
 			}
 		}),
 	}
