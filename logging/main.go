@@ -174,5 +174,5 @@ func zapDynamicLogger() {
 func main() {
 	// zapJson()
 	// zapNthOccurrence()
-	zapDynamicLogger()
+	// zapDynamicLogger()
 }
