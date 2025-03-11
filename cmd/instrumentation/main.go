@@ -78,14 +78,14 @@ func main() {
 	gets := 100
 	wg := new(sync.WaitGroup)
 
-	for _ = range clients {
+	for range clients {
 		wg.Add(1)
 		c := &http.Client{
 			Transport: http.DefaultTransport.(*http.Transport).Clone(),
 		}
 		go func() {
 			defer wg.Done()
-			for _ = range gets {
+			for range gets {
 				resp, err := c.Get(fmt.Sprintf("http://%s", *webAddr))
 				if err != nil {
 					log.Fatal(err)
@@ -93,6 +93,7 @@ func main() {
 				_, _ = io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 			}
+			c.CloseIdleConnections()
 		}()
 
 	}

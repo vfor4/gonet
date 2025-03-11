@@ -50,7 +50,7 @@ var (
 		[]string{},
 	)
 
-	RequesetDurationSumary metrics.Histogram = prometheus.NewSummaryFrom(
+	RequestDurationSumary metrics.Histogram = prometheus.NewSummaryFrom(
 		prom.SummaryOpts{
 			Namespace: *Namespace,
 			Subsystem: *Subsystem,
